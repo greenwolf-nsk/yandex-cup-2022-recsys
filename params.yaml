@@ -1,0 +1,64 @@
+data:
+  raw_dir: data
+  processed_dir: data/processed
+  working_dir: data/processed
+  candidates_train: train_fullest
+  val_size: 100000
+  sample_size: 10000
+  num_target_events: 1
+
+candidates:
+  cooc:
+    model: pair_stats.pickle
+    item_indices: '0 1'
+    num_recs: 300
+
+  cooc_smart:
+    num_candidates: 1500
+    history_last_items: 16
+    max_rank_diff: 7
+    items_per_item: 100
+
+  popular:
+    model: popular.pickle
+    last_popular_items: 1
+
+  similar:
+    model: similar.pickle
+    recommender: bm25
+
+  als:
+    model: als.npz
+    factors: 300
+    iterations: 50
+    items_per_user: 500
+    use_last_items: 100
+
+features:
+  cooc_stats:
+    popularity_last_items: 100
+    min_rank_diff: -7
+    max_rank_diff: 7
+    items_per_item: 100
+
+  item:
+    offsets: 0 10 100 255
+
+  artist:
+    offsets: 0 10 100 255
+
+  cooc:
+    history_last_items: 100
+
+  als:
+    history_last_items: 10
+
+  similarity:
+    history_last_items: 3
+
+
+train:
+  downsample: 0.3
+  learning_rate: 0.04
+  binary_target: 1
+  metric: "None"

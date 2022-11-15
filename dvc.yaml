@@ -1,0 +1,460 @@
+stages:
+  prepare_data:
+    cmd: python3 bin/process_raw_data.py 
+      --raw_data_dir ${data.raw_dir}
+      --processed_data_dir ${data.processed_dir}
+      --val_size ${data.val_size}
+      --sample_size ${data.sample_size}
+      --num_target_events ${data.num_target_events}
+    outs:
+      - ${data.processed_dir}/train
+      - ${data.processed_dir}/train_fullest
+      - ${data.processed_dir}/val
+      - ${data.processed_dir}/val_targets
+      - ${data.processed_dir}/test
+      - ${data.processed_dir}/sample/train
+      - ${data.processed_dir}/sample/train_fullest
+      - ${data.processed_dir}/sample/val
+      - ${data.processed_dir}/sample/val_targets
+      - ${data.processed_dir}/sample/test
+
+  train_cooc_candidates:
+    cmd: python3 bin/train_cooc_model.py
+      --data ${data.working_dir}/${data.candidates_train}
+      --model ${candidates.cooc.model}
+    deps:
+      - ${data.working_dir}/${data.candidates_train}
+    outs:
+      - ${candidates.cooc.model}
+
+  calculate_cooc_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/calculate_cooc_candidates.py
+        --data ${data.working_dir}/${item}
+        --model ${candidates.cooc.model}
+        --num_recs ${candidates.cooc.num_recs}
+        --item_indices ${candidates.cooc.item_indices}
+        --out cooc_candidates_${item}.pq
+      deps:
+        - ${data.working_dir}/${item}
+        - ${candidates.cooc.model}
+      outs:
+        - cooc_candidates_${item}.pq
+
+  train_popular_candidates:
+    cmd: python3 bin/train_popular_model.py 
+          --data ${data.working_dir}/${data.candidates_train}
+          --last_popular_items ${candidates.popular.last_popular_items}
+          --model ${candidates.popular.model}
+    deps:
+      - ${data.working_dir}/${data.candidates_train}
+    outs:
+      - ${candidates.popular.model}
+
+  calculate_popular_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/calculate_popular_candidates.py 
+            --data ${data.working_dir}/${item}
+            --model ${candidates.popular.model} 
+            --out popular_candidates_${item}.pq
+      deps:
+        - ${data.working_dir}/${item}
+        - ${candidates.popular.model}
+      outs:
+        - popular_candidates_${item}.pq
+        
+  train_similar_candidates:
+    cmd: python3 bin/train_similar_model.py 
+          --data ${data.working_dir}/${data.candidates_train} 
+          --recommender ${candidates.similar.recommender}
+          --model ${candidates.similar.model}
+    deps:
+      - ${data.working_dir}/${data.candidates_train}
+    outs:
+      - ${candidates.similar.model}
+
+  calculate_similar_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/calculate_similar_candidates.py 
+            --data ${data.working_dir}/${item}
+            --model ${candidates.similar.model} 
+            --out similar_candidates_${item}.pq
+      deps:
+        - ${data.working_dir}/${item}
+        - ${candidates.similar.model}
+      outs:
+        - similar_candidates_${item}.pq
+    
+  train_als_candidates:
+    cmd: python3 bin/train_als_model.py
+      --data ${data.working_dir}/${data.candidates_train}
+      --factors ${candidates.als.factors}
+      --iterations ${candidates.als.iterations}
+      --model als
+    deps:
+      - ${data.working_dir}/${data.candidates_train}
+    outs:
+      - ${candidates.als.model}
+
+  calculate_als_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/calculate_als_candidates.py
+        --data ${data.working_dir}/${item}
+        --model ${candidates.als.model}
+        --use_last_items ${candidates.als.use_last_items}
+        --items_per_user ${candidates.als.items_per_user}
+        --out als_candidates_${item}.pq
+      deps:
+        - ${data.working_dir}/${item}
+        - ${candidates.als.model}
+      outs:
+        - als_candidates_${item}.pq
+
+  calculate_cooc_smart_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/calculate_cooc_smart_candidates.py
+        --val_or_test_data ${data.working_dir}/${item}
+        --history_last_items ${candidates.cooc_smart.history_last_items}
+        --num_candidates ${candidates.cooc_smart.num_candidates}
+        --cooc_stats cooc_stats_for_smart.pq
+        --out cooc_smart_candidates_${item}.pq
+      deps:
+        - cooc_stats_for_smart.pq
+        - ${data.working_dir}/${item}
+      outs:
+        - cooc_smart_candidates_${item}.pq
+
+  calculate_artist_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/calculate_artist_candidates.py
+        --train_data ${data.working_dir}/train_fullest
+        --val_or_test_data ${data.working_dir}/${item}
+        --artists ${data.processed_dir}/artists.pq
+        --out artist_candidates_${item}.pq
+      deps:
+        - ${data.working_dir}/train_fullest
+        - ${data.working_dir}/${item}
+        - ${data.processed_dir}/artists.pq
+      outs:
+        - artist_candidates_${item}.pq
+
+
+  merge_candidates:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/merge_candidates.py 
+            cooc_smart_candidates_${item}.pq
+            similar_candidates_${item}.pq
+            als_candidates_${item}.pq
+            cooc_candidates_${item}.pq
+            popular_candidates_${item}.pq
+            --out merged_candidates_${item}.pq
+      deps:
+        - bin/merge_candidates.py
+        - cooc_smart_candidates_${item}.pq
+        - cooc_candidates_${item}.pq
+        - popular_candidates_${item}.pq
+        - similar_candidates_${item}.pq
+        - als_candidates_${item}.pq
+      outs:
+        - merged_candidates_${item}.pq
+
+
+  create_user_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_features.py 
+            --data ${data.working_dir}/${item}  
+            --artists ${data.processed_dir}/artists.pq
+            --out user_features_${item}.pq
+      deps:
+        - ${data.working_dir}/${item}
+        - ${data.processed_dir}/artists.pq
+      outs:
+        - user_features_${item}.pq
+
+  create_user_history_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_history_features.py
+        --train_data ${data.working_dir}/train_fullest
+        --val_or_test_data ${data.working_dir}/${item}
+        --artists ${data.processed_dir}/artists.pq
+        --out user_history_features_${item}.pq
+      deps:
+        - ${data.working_dir}/train_fullest
+        - ${data.working_dir}/${item}
+        - ${data.processed_dir}/artists.pq
+      outs:
+        - user_history_features_${item}.pq
+
+  calculate_cooc_stats:
+    cmd: python3 bin/calculate_cooc_stats.py
+          --data ${data.working_dir}/train_fullest
+          --min_rank_diff ${features.cooc_stats.min_rank_diff}
+          --max_rank_diff ${features.cooc_stats.max_rank_diff}
+          --popularity_last_items ${features.cooc_stats.popularity_last_items}
+          --items_per_item ${features.cooc_stats.items_per_item}
+          --out cooc_stats.pq
+    deps:
+      - ${data.working_dir}/train_fullest
+    outs:
+      - cooc_stats.pq
+
+  calculate_cooc_stats_for_smart:
+    cmd: python3 bin/calculate_cooc_stats.py
+      --data ${data.working_dir}/train_fullest
+      --max_rank_diff ${candidates.cooc_smart.max_rank_diff}
+      --popularity_last_items ${features.cooc_stats.popularity_last_items}
+      --items_per_item ${candidates.cooc_smart.items_per_item}
+      --out cooc_stats_for_smart.pq
+    deps:
+      - ${data.working_dir}/train_fullest
+    outs:
+      - cooc_stats_for_smart.pq
+
+  create_user_history_cooc_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_history_cooc_features.py
+        --candidates merged_candidates_${item}.pq
+        --val_or_test_data ${data.working_dir}/${item}
+        --history_last_items ${features.cooc.history_last_items}
+        --cooc_stats cooc_stats.pq
+        --out user_history_cooc_features_${item}.pq
+      deps:
+        - merged_candidates_${item}.pq
+        - ${data.working_dir}/${item}
+        - ${data.processed_dir}/artists.pq
+        - cooc_stats.pq
+      outs:
+        - user_history_cooc_features_${item}.pq
+
+  create_user_history_als_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_history_als_features.py
+        --candidates merged_candidates_${item}.pq
+        --val_or_test_data ${data.working_dir}/${item}
+        --als_model ${candidates.als.model}
+        --history_last_items ${features.als.history_last_items}
+        --out user_history_als_features_${item}.pq
+      deps:
+        - merged_candidates_${item}.pq
+        - ${data.working_dir}/${item}
+        - ${candidates.als.model}
+      outs:
+        - user_history_als_features_${item}.pq
+
+  create_user_history_similarity_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_history_similarity_features.py
+        --candidates merged_candidates_${item}.pq
+        --val_or_test_data ${data.working_dir}/${item}
+        --similarity_model ${candidates.similar.model}
+        --history_last_items ${features.similarity.history_last_items}
+        --out user_history_similarity_features_${item}.pq
+      deps:
+        - merged_candidates_${item}.pq
+        - ${data.working_dir}/${item}
+        - ${candidates.similar.model}
+      outs:
+        - user_history_similarity_features_${item}.pq
+
+  create_user_artist_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_artist_features.py 
+            --data ${data.working_dir}/${item}  
+            --artists ${data.processed_dir}/artists.pq
+            --out user_artist_features_${item}.pq
+      deps:
+        - ${data.working_dir}/${item}
+        - ${data.processed_dir}/artists.pq
+      outs:
+        - user_artist_features_${item}.pq
+
+
+  create_item_features:
+    cmd: python3 bin/create_item_features.py 
+          --data ${data.working_dir}/train_fullest
+          --offsets ${features.item.offsets}
+          --out item_features.pq
+    deps:
+      - ${data.working_dir}/train_fullest
+    outs:
+      - item_features.pq
+
+  create_artist_features:
+    cmd: python3 bin/create_artist_features.py 
+          --data ${data.working_dir}/train_fullest
+          --artists ${data.processed_dir}/artists.pq
+          --offsets ${features.artist.offsets}
+          --artist_features_out artist_features.pq
+          --artist_item_features_out artist_item_features.pq
+    deps:
+      - ${data.working_dir}/train_fullest
+      - ${data.processed_dir}/artists.pq
+    outs:
+      - artist_features.pq
+      - artist_item_features.pq
+
+  create_user_history_artist_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/create_user_history_artist_features.py
+        --train_data ${data.working_dir}/train_fullest
+        --candidates merged_candidates_${item}.pq
+        --val_or_test_data ${data.working_dir}/${item}
+        --artists ${data.processed_dir}/artists.pq
+        --out user_history_artist_features_${item}.pq
+      deps:
+        - ${data.working_dir}/train_fullest
+        - ${data.working_dir}/${item}
+        - ${data.processed_dir}/artists.pq
+        - merged_candidates_${item}.pq
+      outs:
+        - user_history_artist_features_${item}.pq
+
+  merge_candidates_and_features:
+    foreach:
+      - val
+      - test
+    do:
+      cmd: python3 bin/merge_candidates_with_features.py 
+          --candidates merged_candidates_${item}.pq
+          --artists ${data.processed_dir}/artists.pq
+          --features 
+              artist_features.pq
+              artist_item_features.pq
+              item_features.pq
+              user_features_${item}.pq
+              user_history_features_${item}.pq
+              user_history_cooc_features_${item}.pq
+              user_artist_features_${item}.pq
+              user_history_als_features_${item}.pq
+              user_history_similarity_features_${item}.pq
+          --out candidates_with_features_${item}.pq
+          --mode ${item}
+          --create_composite_features 1
+          --targets ${data.working_dir}/val_targets
+      deps:
+        - merged_candidates_${item}.pq
+        - artist_features.pq
+        - artist_item_features.pq
+        - item_features.pq
+        - user_features_${item}.pq
+        - user_history_features_${item}.pq
+        - user_history_cooc_features_${item}.pq
+        - user_artist_features_${item}.pq
+        - user_history_als_features_${item}.pq
+        - user_history_similarity_features_${item}.pq
+      outs:
+        - candidates_with_features_${item}.pq
+
+  train_lightgbm:
+    cmd: python3 bin/train_lightgbm.py 
+          --candidates candidates_with_features_val.pq
+          --targets ${data.working_dir}/val_targets
+          --downsample ${train.downsample}
+          --metric ${train.metric}
+          --learning_rate ${train.learning_rate}
+    deps:
+      - candidates_with_features_val.pq
+      - ${data.working_dir}/val_targets
+    outs:
+      - model.lgb
+    metrics:
+      - train_metrics.json
+
+  train_lightgbm_cv:
+    cmd: python3 bin/train_lightgbm_cv.py
+      --candidates candidates_with_features_val.pq
+      --learning_rate ${train.learning_rate}
+      --binary_target ${train.binary_target}
+    deps:
+      - candidates_with_features_val.pq
+    outs:
+        - booster_fold0.lgb
+        - booster_fold1.lgb
+        - booster_fold2.lgb
+    metrics:
+      - cv_metrics.json
+
+
+  split_test_by_chunks:
+    cmd: python3 bin/split_test_by_chunks.py
+      --candidates candidates_with_features_test.pq
+    deps:
+      - candidates_with_features_test.pq
+    outs:
+      - 0_candidates_with_features_test.pq
+      - 1_candidates_with_features_test.pq
+      - 2_candidates_with_features_test.pq
+      - 3_candidates_with_features_test.pq
+      - 4_candidates_with_features_test.pq
+      - 5_candidates_with_features_test.pq
+
+  create_submission_cv:
+    cmd: python3 bin/create_submission_cv.py
+      --candidates candidates_with_features_test.pq
+      --boosters booster_fold0.lgb booster_fold1.lgb booster_fold2.lgb
+      --out submission_cv.csv
+    deps:
+      - 0_candidates_with_features_test.pq
+      - 1_candidates_with_features_test.pq
+      - 2_candidates_with_features_test.pq
+      - 3_candidates_with_features_test.pq
+      - 4_candidates_with_features_test.pq
+      - 5_candidates_with_features_test.pq
+      - booster_fold0.lgb
+      - booster_fold1.lgb
+      - booster_fold2.lgb
+    outs:
+      - submission_cv.csv
+
+  create_submission:
+    cmd: python3 bin/create_submission.py
+          --candidates candidates_with_features_test.pq
+          --model model.lgb
+          --out submission.csv
+    deps:
+      - candidates_with_features_test.pq
+      - model.lgb
+    outs:
+      - submission.csv
